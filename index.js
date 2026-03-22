@@ -283,7 +283,9 @@ app.get("/leaderboard", async (req, res) => {
 
                     totalMatches: { $sum: 1 },
 
-                    bestKill: { $max: "$kills" }, // ✅ best kill in single match
+                    bestKill: { $max: "$kills" },
+                    bestDamage: { $max: "$damage" },
+                    leastDamage: { $min: "$damageTaken" },
 
                     totalWins: {
                         $sum: {
@@ -292,37 +294,62 @@ app.get("/leaderboard", async (req, res) => {
                     },
                 },
             },
+            {
+                $addFields: {
+                    avgKills: {
+                        $cond: [
+                            { $eq: ["$totalMatches", 0] },
+                            0,
+                            { $divide: ["$totalKills", "$totalMatches"] },
+                        ],
+                    },
+                    avgDamage: {
+                        $cond: [
+                            { $eq: ["$totalMatches", 0] },
+                            0,
+                            { $divide: ["$totalDamage", "$totalMatches"] },
+                        ],
+                    },
+                    avgDamageTaken: {
+                        $cond: [
+                            { $eq: ["$totalMatches", 0] },
+                            0,
+                            { $divide: ["$totalDamageTaken", "$totalMatches"] },
+                        ],
+                    },
+                },
+            },
         ]);
 
-        // 🏆 Categories
-        const topWins = [...stats].sort((a, b) => b.totalWins - a.totalWins)[0];
-        const topKills = [...stats].sort((a, b) => b.totalKills - a.totalKills)[0];
-        const topDamage = [...stats].sort((a, b) => b.totalDamage - a.totalDamage)[0];
-
-        const leastDamageTaken = [...stats].sort(
-            (a, b) => a.totalDamageTaken - b.totalDamageTaken
-        )[0];
-
-        const mostMatches = [...stats].sort(
-            (a, b) => b.totalMatches - a.totalMatches
-        )[0];
-
-        const bestKillPlayer = [...stats].sort(
-            (a, b) => b.bestKill - a.bestKill
-        )[0];
+        // 🔥 helper function (clean code)
+        const top5 = (arr, key, order = "desc") =>
+            [...arr]
+                .sort((a, b) =>
+                    order === "desc" ? b[key] - a[key] : a[key] - b[key]
+                )
+                .slice(0, 5);
 
         res.json({
-            topWins,
-            topKills,
-            topDamage,
-            leastDamageTaken,
-            mostMatches,
-            bestKillPlayer,
+            topWins: top5(stats, "totalWins"),
+            topKills: top5(stats, "totalKills"),
+            topDamage: top5(stats, "totalDamage"),
+            leastDamageTaken: top5(stats, "totalDamageTaken", "asc"),
+            mostMatches: top5(stats, "totalMatches"),
+
+            bestKillPlayer: top5(stats, "bestKill"),
+            bestDamagePlayer: top5(stats, "bestDamage"),
+            leastDamagePlayer: top5(stats, "leastDamage", "asc"),
+
+            // 🔥 averages (TOP 5)
+            avgKillsTop: top5(stats, "avgKills"),
+            avgDamageTop: top5(stats, "avgDamage"),
+            avgDamageTakenTop: top5(stats, "avgDamageTaken", "asc"),
         });
     } catch (error) {
         res.status(500).json({ message: error.message });
     }
 });
+
 connectDB()
     .then(() => {
         app.listen(process.env.PORT, () => {
