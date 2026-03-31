@@ -292,6 +292,13 @@ app.get("/leaderboard", async (req, res) => {
                             $cond: [{ $eq: ["$matchResult", "Won"] }, 1, 0],
                         },
                     },
+
+                    // 🔥 NEW: MVP COUNT
+                    totalMVPs: {
+                        $sum: {
+                            $cond: [{ $eq: ["$mvp", "Yes"] }, 1, 0],
+                        },
+                    },
                 },
             },
             {
@@ -317,11 +324,44 @@ app.get("/leaderboard", async (req, res) => {
                             { $divide: ["$totalDamageTaken", "$totalMatches"] },
                         ],
                     },
+
+                    // 🔥 WIN RATE
+                    winRate: {
+                        $cond: [
+                            { $eq: ["$totalMatches", 0] },
+                            0,
+                            {
+                                $multiply: [
+                                    { $divide: ["$totalWins", "$totalMatches"] },
+                                    100,
+                                ],
+                            },
+                        ],
+                    },
+
+                    // 🔥 MVP RATE (optional but powerful)
+                    mvpRate: {
+                        $cond: [
+                            { $eq: ["$totalMatches", 0] },
+                            0,
+                            {
+                                $multiply: [
+                                    { $divide: ["$totalMVPs", "$totalMatches"] },
+                                    100,
+                                ],
+                            },
+                        ],
+                    },
                 },
             },
         ]);
 
-        // 🔥 helper function (clean code)
+        // 🔥 FILTER (minimum matches for fairness)
+        const filteredStats = stats.filter(
+            (player) => player.totalMatches >= 5
+        );
+
+        // 🔥 helper function
         const top5 = (arr, key, order = "desc") =>
             [...arr]
                 .sort((a, b) =>
@@ -330,21 +370,151 @@ app.get("/leaderboard", async (req, res) => {
                 .slice(0, 5);
 
         res.json({
+            // 🏆 core stats
             topWins: top5(stats, "totalWins"),
             topKills: top5(stats, "totalKills"),
             topDamage: top5(stats, "totalDamage"),
             leastDamageTaken: top5(stats, "totalDamageTaken", "asc"),
             mostMatches: top5(stats, "totalMatches"),
 
+            // 🥇 MVP leaderboard
+            topMVPs: top5(stats, "totalMVPs"),
+
+            // 🔥 best performances
             bestKillPlayer: top5(stats, "bestKill"),
             bestDamagePlayer: top5(stats, "bestDamage"),
             leastDamagePlayer: top5(stats, "leastDamage", "asc"),
 
-            // 🔥 averages (TOP 5)
+            // 📊 averages
             avgKillsTop: top5(stats, "avgKills"),
             avgDamageTop: top5(stats, "avgDamage"),
             avgDamageTakenTop: top5(stats, "avgDamageTaken", "asc"),
+
+            // 🎯 win rate
+            topWinRate: top5(filteredStats, "winRate"),
+
+            // 🚀 MVP efficiency (optional advanced leaderboard)
+            topMVPRate: top5(filteredStats, "mvpRate"),
         });
+    } catch (error) {
+        res.status(500).json({ message: error.message });
+    }
+});
+
+app.get("/compare/:opponentId", authMiddleware, async (req, res) => {
+    try {
+        const currentUserId = req.user.userId;
+        const opponentId = req.params.opponentId;
+
+        // 🔥 aggregate all players
+        const stats = await MatchStats.aggregate([
+            {
+                $group: {
+                    _id: "$playerId",
+                    playerName: { $first: "$playerName" },
+
+                    totalKills: { $sum: "$kills" },
+                    totalDamage: { $sum: "$damage" },
+                    totalDamageTaken: { $sum: "$damageTaken" },
+                    totalMatches: { $sum: 1 },
+
+                    totalWins: {
+                        $sum: {
+                            $cond: [{ $eq: ["$matchResult", "Won"] }, 1, 0],
+                        },
+                    },
+                },
+            },
+            {
+                $addFields: {
+                    avgKills: {
+                        $cond: [
+                            { $eq: ["$totalMatches", 0] },
+                            0,
+                            { $divide: ["$totalKills", "$totalMatches"] },
+                        ],
+                    },
+
+                    winRate: {
+                        $cond: [
+                            { $eq: ["$totalMatches", 0] },
+                            0,
+                            {
+                                $multiply: [
+                                    { $divide: ["$totalWins", "$totalMatches"] },
+                                    100,
+                                ],
+                            },
+                        ],
+                    },
+
+                    damageEfficiency: {
+                        $cond: [
+                            { $eq: ["$totalDamageTaken", 0] },
+                            0,
+                            {
+                                $multiply: [
+                                    { $divide: ["$totalDamage", "$totalDamageTaken"] },
+                                    100,
+                                ],
+                            },
+                        ],
+                    },
+
+                    survivalEfficiency: {
+                        $cond: [
+                            { $eq: ["$totalMatches", 0] },
+                            0,
+                            {
+                                $multiply: [
+                                    { $divide: ["$totalWins", "$totalMatches"] },
+                                    100,
+                                ],
+                            },
+                        ],
+                    },
+                },
+            },
+        ]);
+
+        // 🔍 find both players
+        const currentPlayer = stats.find(p => p._id === currentUserId);
+        const opponent = stats.find(p => p._id === opponentId);
+
+        if (!currentPlayer || !opponent) {
+            return res.status(404).json({ message: "Player not found" });
+        }
+
+
+
+        // ⚔️ final comparison
+        res.json({
+            currentPlayer,
+            opponent,
+
+            comparison: {
+                winRate: {
+                    you: currentPlayer.winRate,
+                    opponent: opponent.winRate,
+                },
+
+                killContribution: {
+                    you: currentPlayer.avgKills,
+                    opponent: opponent.avgKills,
+                },
+
+                damageEfficiency: {
+                    you: currentPlayer.damageEfficiency,
+                    opponent: opponent.damageEfficiency,
+                },
+
+                survivalEfficiency: {
+                    you: currentPlayer.survivalEfficiency,
+                    opponent: opponent.survivalEfficiency,
+                },
+            },
+        });
+
     } catch (error) {
         res.status(500).json({ message: error.message });
     }
